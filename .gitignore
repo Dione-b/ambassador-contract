@@ -4,3 +4,7 @@ target
 # Local settings
 .soroban
 .stellar
+
+# Deploy variables
+.deploy_vars
+.env

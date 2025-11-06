@@ -2,10 +2,10 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror,
     Env, Address,
-    BytesN, // Used for the Hash
-    Symbol, symbol_short, // Used for Events
-    Vec,    // Used for batch operations
-    String, // Used for nicknames
+    BytesN,
+    symbol_short,
+    Vec,
+    String,
 };
 
 // --- Custom Error Definitions ---
@@ -26,11 +26,10 @@ pub enum Error {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserProfile {
     pub nickname: String,
-    pub registered_at: u32, // Ledger sequence number when profile was created/updated
+    pub registered_at: u32,
 }
 
 // --- Storage Key Definitions ---
-// RECOMMENDATION 5: Added Debug, Eq, PartialEq
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StorageKey {
@@ -48,13 +47,10 @@ pub struct AttendanceContract;
 #[contractimpl]
 impl AttendanceContract {
 
-    // --- POINT 3: New TTL pattern ---
-    // Threshold: ~7 days (17280 ledgers/day * 7 days)
+    // TTL Threshold: ~7 days
     const TTL_THRESHOLD: u32 = 120_960;
-
     // Bump for instance data and sessions: ~30 days
     const TTL_BUMP_30D: u32 = 518_400;
-
     // Bump for user profiles: ~90 days
     const TTL_BUMP_90D: u32 = 1_555_200;
 
@@ -67,13 +63,11 @@ impl AttendanceContract {
         admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
 
-        // --- CRITICAL 1: Add TTL extension for instance storage ---
         env.storage().instance().extend_ttl(Self::TTL_THRESHOLD, Self::TTL_BUMP_30D);
 
-        // --- RECOMMENDATION 6: Add initialization event ---
         env.events().publish(
-            (symbol_short!("init"),),
-                             admin
+            (symbol_short!("init"),), // Topic
+                             (admin,)                   // Data (as a Tuple)
         );
 
         Ok(())
@@ -89,7 +83,6 @@ impl AttendanceContract {
 
         env.storage().persistent().set(&StorageKey::ActiveHash, &new_hash);
 
-        // --- POINT 3: Use the new TTL pattern ---
         env.storage().persistent().extend_ttl(
             &StorageKey::ActiveHash,
             Self::TTL_THRESHOLD,
@@ -98,7 +91,7 @@ impl AttendanceContract {
 
         env.events().publish(
             (symbol_short!("new_sess"),),
-                             new_hash
+                             (new_hash,)
         );
 
         Ok(())
@@ -114,7 +107,6 @@ impl AttendanceContract {
         .get(&StorageKey::ActiveHash)
         .ok_or(Error::NoActiveSession)?;
 
-        // --- POINT 3: Use the new TTL pattern ---
         env.storage().persistent().extend_ttl(
             &StorageKey::ActiveHash,
             Self::TTL_THRESHOLD,
@@ -133,7 +125,6 @@ impl AttendanceContract {
 
         env.storage().persistent().set(&presence_key, &true);
 
-        // --- POINT 3: Use the new TTL pattern ---
         env.storage().persistent().extend_ttl(
             &presence_key,
             Self::TTL_THRESHOLD,
@@ -142,7 +133,6 @@ impl AttendanceContract {
 
         let profile_key = StorageKey::UserProfile(user.clone());
         let nickname = if let Some(profile) = env.storage().persistent().get::<StorageKey, UserProfile>(&profile_key) {
-            // Extends the profile's TTL upon registration
             env.storage().persistent().extend_ttl(
                 &profile_key,
                 Self::TTL_THRESHOLD,
@@ -150,10 +140,9 @@ impl AttendanceContract {
             );
             profile.nickname
         } else {
-            String::new(&env)
+            String::from_str(&env, "")
         };
 
-        // --- RECOMMENDATION 9: Remove unnecessary clones ---
         env.events().publish(
             (symbol_short!("present"),),
                              (user, stored_hash, nickname) // (user, session_hash, nickname)
@@ -173,10 +162,8 @@ impl AttendanceContract {
 
         env.storage().instance().set(&StorageKey::Admin, &new_admin);
 
-        // --- CRITICAL 2: Add TTL extension for instance storage ---
         env.storage().instance().extend_ttl(Self::TTL_THRESHOLD, Self::TTL_BUMP_30D);
 
-        // --- RECOMMENDATION 9: Remove unnecessary clones ---
         env.events().publish(
             (symbol_short!("adm_xfer"),),
                              (current_admin, new_admin)
@@ -201,14 +188,12 @@ impl AttendanceContract {
         let profile_key = StorageKey::UserProfile(user.clone());
         env.storage().persistent().set(&profile_key, &profile);
 
-        // --- POINT 3: Use the new TTL pattern (with 90 days) ---
         env.storage().persistent().extend_ttl(
             &profile_key,
             Self::TTL_THRESHOLD,
             Self::TTL_BUMP_90D
         );
 
-        // --- RECOMMENDATION 9: Remove unnecessary clones ---
         env.events().publish(
             (symbol_short!("profile"),),
                              (user, nickname)
@@ -217,12 +202,13 @@ impl AttendanceContract {
         Ok(())
     }
 
+    // --- (View functions) ---
+
     /// (View function) Retrieves a user's profile (if it exists).
     pub fn get_profile(env: Env, user: Address) -> Option<UserProfile> {
         let profile_key = StorageKey::UserProfile(user);
 
         if let Some(profile) = env.storage().persistent().get::<StorageKey, UserProfile>(&profile_key) {
-            // --- POINT 3: Use the new TTL pattern (with 90 days) ---
             env.storage().persistent().extend_ttl(
                 &profile_key,
                 Self::TTL_THRESHOLD,
@@ -234,7 +220,6 @@ impl AttendanceContract {
         }
     }
 
-
     /// (View function) Checks if a user is registered for the CURRENT active session.
     pub fn check_presence(env: Env, user: Address) -> bool {
 
@@ -243,7 +228,6 @@ impl AttendanceContract {
             None => return false,
         };
 
-        // --- POINT 3: Use the new TTL pattern ---
         env.storage().persistent().extend_ttl(
             &StorageKey::ActiveHash,
             Self::TTL_THRESHOLD,
@@ -255,7 +239,6 @@ impl AttendanceContract {
         let is_present = env.storage().persistent().get(&presence_key).unwrap_or(false);
 
         if is_present {
-            // --- POINT 3: Use the new TTL pattern ---
             env.storage().persistent().extend_ttl(
                 &presence_key,
                 Self::TTL_THRESHOLD,
@@ -268,7 +251,6 @@ impl AttendanceContract {
 
     /// (View function) Returns the current admin address.
     pub fn get_admin(env: Env) -> Result<Address, Error> {
-        // --- CRITICAL 4: Add TTL extension on read ---
         env.storage().instance().extend_ttl(Self::TTL_THRESHOLD, Self::TTL_BUMP_30D);
 
         env.storage().instance()
@@ -279,7 +261,6 @@ impl AttendanceContract {
     /// (View function) Returns the current active session hash (if any).
     pub fn get_session(env: Env) -> Option<BytesN<32>> {
         if let Some(hash) = env.storage().persistent().get(&StorageKey::ActiveHash) {
-            // --- POINT 3: Use the new TTL pattern ---
             env.storage().persistent().extend_ttl(
                 &StorageKey::ActiveHash,
                 Self::TTL_THRESHOLD,
@@ -305,10 +286,10 @@ impl AttendanceContract {
             let is_present = env.storage().persistent().get(&presence_key).unwrap_or(false);
 
             if is_present {
-                // --- POINT 3: Use the new TTL pattern ---
                 env.storage().persistent().extend_ttl(
                     &presence_key,
                     Self::TTL_THRESHOLD,
+                    // --- ESTA ERA A LINHA COM O TYPO (AGORA CORRIGIDA) ---
                     Self::TTL_BUMP_30D
                 );
             }
